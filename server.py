@@ -20,6 +20,10 @@ import logging
 from pathlib import Path
 from contextlib import contextmanager
 
+import uvicorn
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from mcp.server.fastmcp import FastMCP
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -27,6 +31,7 @@ logger = logging.getLogger("benchmark-mcp")
 
 DB_PATH = os.getenv("DB_PATH", str(Path(__file__).parent / "data" / "benchmark.db"))
 PORT = int(os.getenv("PORT", "8000"))
+MCP_BEARER_TOKEN = os.getenv("MCP_BEARER_TOKEN", "")
 
 mcp = FastMCP(
     name="benchmark-shoppings-br",
@@ -881,6 +886,28 @@ def schema_banco() -> dict:
     return result
 
 
+# ── AUTH MIDDLEWARE ────────────────────────────────────────────────────────
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Validates Authorization: Bearer <token> on all requests when MCP_BEARER_TOKEN is set."""
+
+    async def dispatch(self, request: Request, call_next):
+        if not MCP_BEARER_TOKEN:
+            return await call_next(request)
+
+        auth = request.headers.get("Authorization", "")
+        if auth == f"Bearer {MCP_BEARER_TOKEN}":
+            return await call_next(request)
+
+        return Response("Unauthorized", status_code=401)
+
+
 if __name__ == "__main__":
-    logger.info("benchmark-mcp iniciando na porta %d com %d tools", PORT, len(mcp._tool_manager._tools))
-    mcp.run(transport="streamable-http")
+    n_tools = len(mcp._tool_manager._tools)
+    auth_status = "ON" if MCP_BEARER_TOKEN else "OFF (sem MCP_BEARER_TOKEN)"
+    logger.info("benchmark-mcp iniciando na porta %d com %d tools | auth: %s", PORT, n_tools, auth_status)
+
+    app = mcp.streamable_http_app()
+    app.add_middleware(BearerAuthMiddleware)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
