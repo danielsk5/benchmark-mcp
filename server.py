@@ -7,7 +7,7 @@ Períodos:
 - Iguatemi/Multiplan: FY2025 vs FY2024 (ano encerrado)
 - Allos/XP Malls/JHSF: LTM 3Q25 vs LTM 3Q24 (soma últimos 4 trimestres)
 
-Transporte: streamable-http (sem autenticação — dados públicos de IR)
+Transporte: streamable-http com OAuth 2.1 (quando MCP_OAUTH_PASSWORD definido)
 
 Convenção stake_pct (entity_asset_stakes):
 - Todos os grupos: stake_pct armazenado como decimal (0.0–1.0)
@@ -21,14 +21,28 @@ from pathlib import Path
 from contextlib import contextmanager
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import AuthSettings
+from mcp.server.auth.routes import ClientRegistrationOptions, RevocationOptions
+from oauth_provider import BenchmarkOAuthProvider, MCP_OAUTH_PASSWORD, SERVER_URL, verify_password
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("benchmark-mcp")
 
 DB_PATH = os.getenv("DB_PATH", str(Path(__file__).parent / "data" / "benchmark.db"))
 PORT = int(os.getenv("PORT", "8000"))
+
+oauth_provider = BenchmarkOAuthProvider() if MCP_OAUTH_PASSWORD else None
+auth_settings = AuthSettings(
+    issuer_url=SERVER_URL,
+    resource_server_url=SERVER_URL,
+    client_registration_options=ClientRegistrationOptions(enabled=True),
+    revocation_options=RevocationOptions(enabled=True),
+) if MCP_OAUTH_PASSWORD else None
+
 mcp = FastMCP(
     name="benchmark-shoppings-br",
+    auth_server_provider=oauth_provider,
+    auth=auth_settings,
     instructions="""Banco de dados de benchmark de shoppings brasileiros com dados públicos de IR.
 5 grupos: Iguatemi (IGTI11), Multiplan (MULT3), Allos (ALOS3), XP Malls (XPML11), JHSF (JHSF3).
 Métricas por ativo: vendas/m², aluguel/m², ocupação, yield receita/venda.
@@ -880,6 +894,100 @@ def schema_banco() -> dict:
     return result
 
 
+# ── OAUTH LOGIN ROUTES ────────────────────────────────────────────────────
+
+if oauth_provider:
+    from starlette.requests import Request
+    from starlette.responses import HTMLResponse, RedirectResponse
+    from urllib.parse import urlencode
+    from mcp.server.auth.provider import construct_redirect_uri
+
+    from string import Template
+
+    LOGIN_TEMPLATE = Template("""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Benchmark Shoppings BR</title>
+<style>
+body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f5f5f5}
+.card{background:#fff;border-radius:12px;padding:2rem;box-shadow:0 2px 12px rgba(0,0,0,.1);max-width:360px;width:100%}
+h2{margin:0 0 .5rem;font-size:1.2rem}
+p{color:#666;font-size:.85rem;margin:0 0 1.5rem}
+input[type=password]{width:100%;padding:.7rem;border:1px solid #ddd;border-radius:8px;font-size:1rem;box-sizing:border-box}
+button{width:100%;padding:.7rem;background:#1a73e8;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;margin-top:.8rem}
+button:hover{background:#1557b0}
+.err{color:#d32f2f;font-size:.85rem;margin-top:.5rem}
+</style></head><body>
+<div class="card">
+<h2>Benchmark Shoppings BR</h2>
+<p>Dados de IR de shoppings brasileiros via MCP</p>
+<form method="POST" action="/oauth/login">
+<input type="hidden" name="client_id" value="$client_id">
+<input type="hidden" name="redirect_uri" value="$redirect_uri">
+<input type="hidden" name="code_challenge" value="$code_challenge">
+<input type="hidden" name="state" value="$state">
+<input type="hidden" name="scope" value="$scope">
+<input type="hidden" name="redirect_uri_explicit" value="$redirect_uri_explicit">
+<input type="password" name="password" placeholder="Senha" autofocus required>
+<button type="submit">Entrar</button>
+$error
+</form></div></body></html>""")
+
+    @mcp.custom_route("/oauth/login", methods=["GET", "POST"])
+    async def oauth_login(request: Request):
+        if request.method == "GET":
+            params = request.query_params
+            return HTMLResponse(LOGIN_TEMPLATE.safe_substitute(
+                client_id=params.get("client_id", ""),
+                redirect_uri=params.get("redirect_uri", ""),
+                code_challenge=params.get("code_challenge", ""),
+                state=params.get("state", ""),
+                scope=params.get("scope", ""),
+                redirect_uri_explicit=params.get("redirect_uri_explicit", "0"),
+                error="",
+            ))
+
+        # POST — validate password
+        form = await request.form()
+        password = form.get("password", "")
+        client_id = form.get("client_id", "")
+        redirect_uri = form.get("redirect_uri", "")
+        code_challenge = form.get("code_challenge", "")
+        state = form.get("state", "")
+        scope = form.get("scope", "")
+        redirect_uri_explicit = form.get("redirect_uri_explicit", "0")
+
+        if not verify_password(password):
+            return HTMLResponse(LOGIN_TEMPLATE.safe_substitute(
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                code_challenge=code_challenge,
+                state=state,
+                scope=scope,
+                redirect_uri_explicit=redirect_uri_explicit,
+                error='<p class="err">Senha incorreta</p>',
+            ), status_code=401)
+
+        # Password correct — create auth code and redirect
+        scopes = scope.split() if scope else []
+        code = oauth_provider.create_authorization_code(
+            client_id=client_id,
+            code_challenge=code_challenge,
+            redirect_uri=redirect_uri,
+            redirect_uri_provided_explicitly=redirect_uri_explicit == "1",
+            scopes=scopes,
+        )
+
+        # Redirect back to client with code
+        redirect_params = {"code": code}
+        if state:
+            redirect_params["state"] = state
+
+        target = f"{redirect_uri}?{urlencode(redirect_params)}"
+        return RedirectResponse(url=target, status_code=302)
+
+
 if __name__ == "__main__":
-    logger.info("benchmark-mcp iniciando na porta %d com %d tools", PORT, len(mcp._tool_manager._tools))
+    n_tools = len(mcp._tool_manager._tools)
+    auth_status = "ON" if MCP_OAUTH_PASSWORD else "OFF"
+    logger.info("benchmark-mcp iniciando na porta %d com %d tools | oauth: %s", PORT, n_tools, auth_status)
     mcp.run(transport="streamable-http")
