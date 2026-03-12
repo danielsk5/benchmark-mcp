@@ -1,17 +1,19 @@
 """Benchmark Shoppings BR — MCP Server
 
-Expõe dados públicos de IR de 5 grupos de shoppings brasileiros:
-Iguatemi (IGTI11), Multiplan (MULT3), Allos (ALOS3), XP Malls (XPML11), JHSF (JHSF3)
+Expõe dados públicos de IR de 8 entidades de shoppings brasileiros:
+Iguatemi (IGTI11), Multiplan (MULT3), Allos (ALOS3), XP Malls (XPML11), JHSF (JHSF3),
+Hedge Brasil Shopping (HGBS11), Vinci Shopping Centers (VISC11), BTG Pactual Malls (BPML11)
 
 Períodos:
 - Iguatemi/Multiplan: FY2025 vs FY2024 (ano encerrado)
-- Allos/XP Malls/JHSF: LTM 3Q25 vs LTM 3Q24 (soma últimos 4 trimestres)
+- Demais: LTM 3Q25 vs LTM 3Q24 (soma últimos 4 trimestres)
 
 Transporte: streamable-http com OAuth 2.1 (quando MCP_OAUTH_PASSWORD definido)
 
 Convenção stake_pct (entity_asset_stakes):
-- Todos os grupos: stake_pct armazenado como decimal (0.0–1.0)
+- Todos os grupos: stake_pct armazenado como % (0.0–100.0)
 - Zeros (stake_pct = 0.0) indicam ativos sem participação mapeada — tratar como NULL
+- Colunas _100pct = 100% do shopping (fonte IR). Colunas _empresa = proporcional à participação.
 """
 
 import os
@@ -44,29 +46,50 @@ mcp = FastMCP(
     auth_server_provider=oauth_provider,
     auth=auth_settings,
     instructions="""Banco de dados de benchmark de shoppings brasileiros com dados públicos de IR.
-5 grupos: Iguatemi (IGTI11), Multiplan (MULT3), Allos (ALOS3), XP Malls (XPML11), JHSF (JHSF3).
+8 entidades: Iguatemi (IGTI11), Multiplan (MULT3), Allos (ALOS3), XP Malls (XPML11), JHSF (JHSF3),
+Hedge Brasil (HGBS11), Vinci Shoppings (VISC11), BTG Pactual Malls (BPML11).
 Métricas por ativo: vendas/m², aluguel/m², ocupação, yield receita/venda.
-Período ref: Iguatemi/Multiplan = FY2025; Allos/XP Malls/JHSF = LTM 3Q25.
+Período ref: IGTI11/MULT3 = FY2025; demais = LTM 3Q25.
 Todos os valores monetários em R$ mil. Métricas /m² em R$/m²/ano.
 
-Convenção stake_pct: decimal 0.0–1.0 para todos os grupos.
-Colunas _100pct = 100% do shopping (fonte IR). Colunas _empresa = proporcional à participação.
+METODOLOGIA DE /m² — CRÍTICO:
+- asset_metrics.sales_psqm e rent_psqm = R$/m²/quarter (valor bruto do trimestre, sem anualização).
+- Para valores anuais (R$/m²/ano LTM), USE SEMPRE v_asset_ltm.sales_psqm / v_asset_ltm.rent_psqm,
+  que calcula LTM real (soma 4 quarters / ABL).
+- Todos os tools analytics (ranking_ativos, detalhe_ativo, comparar_ativos, peer_group, gap_analysis,
+  scatter_data, comparar_mercado) já usam v_asset_ltm — retornam R$/m²/ano correto.
+- NUNCA some os valores /m² de 4 trimestres nem tire média deles. Para totais anuais, some sales_total.
 
-Tools disponíveis (14):
-- listar_entidades: lista as 5 empresas
+Convenção stake_pct: % (0.0–100.0) para todos os grupos.
+Colunas _100pct = 100% do shopping (fonte IR) — USE SEMPRE ESTAS para "vendas total" ou "receita total".
+Colunas _empresa = proporcional à participação da entidade no ativo.
+
+Tools disponíveis (19):
+- listar_entidades: lista as 8 entidades
 - ranking_ativos: ranking por métrica
 - detalhe_ativo: detalhe completo de um ativo
-- portfolio_comparativo: período atual vs anterior
-- serie_historica: evolução trimestral de um ativo
+- portfolio_comparativo: período atual vs anterior (apenas IGTI11/MULT3/ALOS3/XPML11/JHSF3)
+- serie_historica: evolução trimestral de um ativo (usa v_asset_ltm — LTM correto)
+- historico_anual: resumo ano a ano com vendas totais e /m² LTM (use para "histórico de vendas")
 - comparar_ativos: side-by-side de 2–3 ativos
-- top_movers: maiores altas/quedas YoY
+- top_movers: maiores altas/quedas YoY (usa v_asset_ltm — LTM correto)
 - resumo_mercado: médias por estado ou categoria
 - peer_group: encontra peers de um ativo referência
 - concentracao_portfolio: HHI e concentração de receita
 - gap_analysis: gaps de um ativo vs média da categoria
 - scatter_data: pares (x,y) para gráficos
-- query_sql: SQL livre read-only (max 500 linhas)
-- schema_banco: schema completo""",
+- mix_lojas: breakdown de segmentos de um shopping (n_lojas, ABL, %) — 9 shoppings disponíveis
+- comparar_mix: side-by-side de 2 shoppings por segmento com delta ABL%
+- buscar_loja: busca lojas por nome/segmento/shopping (1745 lojas, 16 segmentos)
+- mix_por_entidade: mix agregado por operadora — igti11 (4 shoppings), mult3 (2), jhsf3 (2)
+- query_sql: SQL livre read-only (max 500 linhas) — v_asset_ltm disponível
+- schema_banco: schema completo
+
+Store Mix disponível (1745 lojas, 16 segmentos):
+- Iguatemi (igti11): Iguatemi SP, Iguatemi Brasília, JK Iguatemi, Leblon
+- Multiplan (mult3): Village Mall, Park Shopping Barigui
+- JHSF (jhsf3): Cidade Jardim, CJ Shops
+- Pátio Batel: presente no store_mix mas fora das entidades de benchmark""",
     host="0.0.0.0",
     port=PORT,
     streamable_http_path="/mcp",
@@ -98,6 +121,9 @@ ENTITY_PERIODS = {
     "alos3":  ("3Q25", "LTM 3Q25"),
     "xpml11": ("3Q25", "LTM 3Q25"),
     "jhsf3":  ("3Q25", "LTM 3Q25"),
+    "hgbs11": ("3Q25", "LTM 3Q25"),
+    "visc11": ("3Q25", "LTM 3Q25"),
+    "bpml11": ("3Q25", "LTM 3Q25"),
 }
 
 VALID_ENTITIES = set(ENTITY_PERIODS.keys())
@@ -109,7 +135,7 @@ VALID_CATEGORIES = {"premium", "regional", "outlet", "power-center", "other"}
 
 CURRENT_QUARTER_FILTER = """(
     (am.entity_id IN ('igti11','mult3') AND am.quarter = '4Q25')
-    OR (am.entity_id IN ('alos3','xpml11','jhsf3') AND am.quarter = '3Q25')
+    OR (am.entity_id IN ('alos3','xpml11','jhsf3','hgbs11','visc11','bpml11') AND am.quarter = '3Q25')
 )"""
 
 METRIC_MAP = {
@@ -157,7 +183,7 @@ def _validate_metric(metrica: str) -> str:
 
 @mcp.tool()
 def listar_entidades() -> list[dict]:
-    """Lista as 5 empresas no banco com cobertura e período de referência."""
+    """Lista as 8 entidades no banco com cobertura e período de referência."""
     with get_db() as conn:
         rows = conn.execute("""
             SELECT e.id, e.name as nome, e.ticker, e.type as categoria,
@@ -185,7 +211,7 @@ def ranking_ativos(
     """Ranking de ativos por métrica.
 
     metrica: vendas_m2 | aluguel_m2 | ocupacao | yield_pct | sss | noi | noi_margin
-    empresa: filtro por entity_id (igti11, mult3, alos3, xpml11, jhsf3) — vazio = todas
+    empresa: filtro por entity_id (igti11, mult3, alos3, xpml11, jhsf3, hgbs11, visc11, bpml11) — vazio = todas
     estado: filtro por UF (ex: PR, SP, RJ) — vazio = todos
     top_n: quantos retornar (max 100)
     """
@@ -215,23 +241,20 @@ def ranking_ativos(
                 am.rent_psqm as aluguel_m2,
                 ROUND(am.rent_psqm * 100.0 / NULLIF(am.sales_psqm,0), 2) as yield_pct,
                 am.occupancy_rate as ocupacao_pct,
-                eas.abl_total_sqm as abl_m2,
+                am.abl_total_sqm as abl_m2,
                 ROUND(am.sales_total / 1000.0, 1) as vendas_100pct_r_mi,
-                CASE WHEN eas.stake_pct > 0.0
-                     THEN ROUND(am.sales_total * eas.stake_pct / 1000.0, 1)
+                CASE WHEN am.stake_pct > 0.0
+                     THEN ROUND(am.sales_total * am.stake_pct / 100000.0, 1)
                      ELSE NULL END as vendas_empresa_r_mi,
-                CASE WHEN eas.stake_pct > 0.0
-                     THEN ROUND(eas.stake_pct * 100.0, 2)
+                CASE WHEN am.stake_pct > 0.0
+                     THEN ROUND(am.stake_pct, 2)
                      ELSE NULL END as participacao_pct,
                 CASE am.entity_id
                     WHEN 'igti11' THEN 'FY2025' WHEN 'mult3' THEN 'FY2025'
                     ELSE 'LTM 3Q25' END as periodo_ref
-            FROM asset_metrics am
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             JOIN entities e ON e.id = am.entity_id
-            JOIN entity_asset_stakes eas
-                ON eas.asset_id = am.asset_id AND eas.entity_id = am.entity_id
-                AND eas.quarter = am.quarter
             WHERE {where}
             ORDER BY {metric_sql} DESC
             LIMIT ?
@@ -257,29 +280,25 @@ def detalhe_ativo(nome_ativo: str) -> list[dict]:
                 ROUND(am.rent_psqm * 100.0 / NULLIF(am.sales_psqm,0), 2) as yield_pct,
                 am.occupancy_rate as ocupacao_pct, am.sss as sss_pct,
                 am.sales_total as vendas_100pct_r_mil,
-                CASE WHEN eas.stake_pct > 0.0
-                     THEN ROUND(am.sales_total * eas.stake_pct, 0)
+                CASE WHEN am.stake_pct > 0.0
+                     THEN ROUND(am.sales_total * am.stake_pct / 100.0, 0)
                      ELSE NULL END as vendas_empresa_r_mil,
                 am.noi as noi_100pct_r_mil,
-                CASE WHEN eas.stake_pct > 0.0
-                     THEN ROUND(am.noi * eas.stake_pct, 0)
+                CASE WHEN am.stake_pct > 0.0
+                     THEN ROUND(am.noi * am.stake_pct / 100.0, 0)
                      ELSE NULL END as noi_empresa_r_mil,
                 am.rent_total as aluguel_100pct_r_mil,
-                CASE WHEN eas.stake_pct > 0.0
-                     THEN ROUND(am.rent_total * eas.stake_pct, 0)
+                CASE WHEN am.stake_pct > 0.0
+                     THEN ROUND(am.rent_total * am.stake_pct / 100.0, 0)
                      ELSE NULL END as aluguel_empresa_r_mil,
-                eas.abl_total_sqm as abl_total_m2, eas.abl_own_sqm as abl_propria_m2,
-                CASE WHEN eas.stake_pct > 0.0
-                     THEN ROUND(eas.stake_pct * 100.0, 4)
+                am.abl_total_sqm as abl_total_m2, am.abl_own_sqm as abl_propria_m2,
+                CASE WHEN am.stake_pct > 0.0
+                     THEN ROUND(am.stake_pct, 4)
                      ELSE NULL END as participacao_pct
-            FROM asset_metrics am
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             JOIN entities e ON e.id = am.entity_id
-            JOIN entity_asset_stakes eas
-                ON eas.asset_id = am.asset_id AND eas.entity_id = am.entity_id
-                AND eas.quarter = am.quarter
             WHERE {CURRENT_QUARTER_FILTER}
-            AND am.period_type = 'quarter'
             AND LOWER(a.name) LIKE LOWER(?)
             ORDER BY am.sales_psqm DESC NULLS LAST
         """, [f"%{nome_ativo}%"])
@@ -291,6 +310,7 @@ def portfolio_comparativo(empresa: str = "") -> list[dict]:
     """Comparativo de portfólio: período atual vs anterior por empresa.
 
     empresa: igti11 | mult3 | alos3 | xpml11 | jhsf3 — vazio = todas
+    (HGBS11/VISC11/BPML11 não têm portfolio_metrics — use ranking_ativos ou query_sql para esses)
     Iguatemi/Multiplan: FY2025 vs FY2024
     Allos/XP Malls/JHSF: LTM 3Q25 vs LTM 3Q24
     """
@@ -365,16 +385,33 @@ def serie_historica(
     metrica: str = "vendas_m2",
     n_quarters: int = 12,
 ) -> list[dict]:
-    """Série histórica trimestral de um ativo.
+    """Série histórica trimestral de um ativo — vendas/m² e aluguel/m² em LTM (últimos 12 meses).
 
-    nome_ativo: busca parcial (ex: 'Village', 'Iguatemi SP')
+    nome_ativo: busca parcial (ex: 'Village', 'Iguatemi SP', 'Barigui')
     metrica: vendas_m2 | aluguel_m2 | ocupacao | yield_pct | sss | noi | noi_margin
     n_quarters: quantos trimestres retornar (max 44, default 12)
+
+    IMPORTANTE: vendas_m2 e aluguel_m2 retornados são LTM (soma 4 quarters reais / ABL),
+    não Q×4. Isso garante comparabilidade histórica correta sem distorção sazonal.
+    Campo psqm_methodology indica 'LTM' (4 quarters) ou 'partial_NQ' (início da série).
 
     Retorna em ordem cronológica (mais antigo primeiro).
     """
     n_quarters = min(int(n_quarters), 44)
-    metric_sql = _validate_metric(metrica)
+    # Remap metric SQL to use v_asset_ltm columns (LTM-correct)
+    metric_map_ltm = {
+        "vendas_m2":  "am.sales_psqm",
+        "aluguel_m2": "am.rent_psqm",
+        "ocupacao":   "am.occupancy_rate",
+        "yield_pct":  "ROUND(am.rent_psqm * 100.0 / NULLIF(am.sales_psqm,0), 2)",
+        "sss":        "am.sss",
+        "noi":        "am.noi",
+        "noi_margin": "am.noi_margin",
+    }
+    metrica_clean = metrica.strip().lower()
+    if metrica_clean not in metric_map_ltm:
+        raise ValueError(f"Métrica inválida: {metrica_clean}. Válidas: {', '.join(sorted(metric_map_ltm.keys()))}")
+    metric_sql = metric_map_ltm[metrica_clean]
 
     with get_db() as conn:
         cur = conn.execute(f"""
@@ -385,19 +422,81 @@ def serie_historica(
                 am.sales_psqm as vendas_m2,
                 am.rent_psqm as aluguel_m2,
                 am.occupancy_rate as ocupacao_pct,
-                am.sss as sss_pct
-            FROM asset_metrics am
+                am.sss as sss_pct,
+                am.psqm_methodology,
+                am.ltm_quarters_count
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             JOIN entities e ON e.id = am.entity_id
-            WHERE am.period_type = 'quarter'
-            AND LOWER(a.name) LIKE LOWER(?)
+            WHERE LOWER(a.name) LIKE LOWER(?)
             AND {metric_sql} IS NOT NULL
-            ORDER BY {QUARTER_ORDER} DESC
+            ORDER BY am.quarter_order DESC
             LIMIT ?
         """, [f"%{nome_ativo}%", n_quarters])
         rows = rows_to_dicts(cur)
 
     return list(reversed(rows))
+
+
+@mcp.tool()
+def historico_anual(
+    nome_ativo: str,
+    ano_ini: int = 2015,
+    ano_fim: int = 2025,
+) -> list[dict]:
+    """Resumo ano a ano de um ativo: vendas totais, vendas/m² e aluguel/m² em LTM.
+
+    nome_ativo: busca parcial (ex: 'Barigui', 'Village', 'Iguatemi SP')
+    ano_ini: ano de início (default 2015)
+    ano_fim: ano de fim (default 2025)
+
+    Metodologia: agrega os 4 trimestres de cada ano civil (1Q-4Q).
+    - vendas_total_r_mi: soma real dos 4 quarters em R$ MM (100% do ativo)
+    - vendas_psqm: LTM ao final do ano (4Q do ano), em R$/m²/ano
+    - receita_psqm: idem para receita de aluguel
+    - abl_4q: ABL total no 4Q do ano em m²
+    Retorna cronológico do mais antigo ao mais recente.
+    """
+    ano_ini = int(ano_ini)
+    ano_fim = int(ano_fim)
+
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT
+                '20' || SUBSTR(am.quarter, 3) AS ano,
+                ROUND(SUM(am.sales_total) / 1000.0, 1) AS vendas_total_r_mi,
+                ROUND(SUM(am.rent_total) / 1000.0, 2) AS receita_total_r_mi,
+                MAX(CASE WHEN am.quarter LIKE '4Q%' THEN am.abl_total_sqm END) AS abl_4q_m2,
+                -- LTM ao final do ano = valor 4Q da view (já é LTM correto)
+                MAX(CASE WHEN am.quarter LIKE '4Q%' THEN am.sales_psqm END) AS vendas_psqm,
+                MAX(CASE WHEN am.quarter LIKE '4Q%' THEN am.rent_psqm END) AS receita_psqm,
+                MAX(CASE WHEN am.quarter LIKE '4Q%' THEN am.psqm_methodology END) AS metodologia,
+                COUNT(DISTINCT am.quarter) AS quarters_disponiveis
+            FROM v_asset_ltm am
+            JOIN assets a ON a.id = am.asset_id
+            WHERE LOWER(a.name) LIKE LOWER(?)
+            AND CAST('20' || SUBSTR(am.quarter, 3) AS INTEGER) BETWEEN ? AND ?
+            GROUP BY am.entity_id, '20' || SUBSTR(am.quarter, 3)
+            HAVING COUNT(DISTINCT am.quarter) = 4
+            ORDER BY ano
+        """, [f"%{nome_ativo}%", ano_ini, ano_fim])
+        rows = rows_to_dicts(cur)
+
+    # Add YoY columns
+    for i, row in enumerate(rows):
+        if i == 0:
+            row["vendas_total_yoy_pct"] = None
+            row["vendas_psqm_yoy_pct"] = None
+        else:
+            prev = rows[i - 1]
+            def yoy(cur_val, prev_val):
+                if prev_val and prev_val != 0 and cur_val is not None:
+                    return round((cur_val - prev_val) * 100.0 / abs(prev_val), 1)
+                return None
+            row["vendas_total_yoy_pct"] = yoy(row["vendas_total_r_mi"], prev["vendas_total_r_mi"])
+            row["vendas_psqm_yoy_pct"] = yoy(row["vendas_psqm"], prev["vendas_psqm"])
+
+    return rows
 
 
 @mcp.tool()
@@ -433,19 +532,15 @@ def comparar_ativos(
                     am.noi_margin as noi_margin_pct,
                     am.occ_cost_pct as custo_ocupacao_pct,
                     am.default_rate as inadimplencia_pct,
-                    eas.abl_total_sqm as abl_total_m2,
+                    am.abl_total_sqm as abl_total_m2,
                     ROUND(am.sales_total / 1000.0, 1) as vendas_100pct_r_mi,
-                    CASE WHEN eas.stake_pct > 0.0
-                         THEN ROUND(eas.stake_pct * 100.0, 2)
+                    CASE WHEN am.stake_pct > 0.0
+                         THEN ROUND(am.stake_pct, 2)
                          ELSE NULL END as participacao_pct
-                FROM asset_metrics am
+                FROM v_asset_ltm am
                 JOIN assets a ON a.id = am.asset_id
                 JOIN entities e ON e.id = am.entity_id
-                JOIN entity_asset_stakes eas
-                    ON eas.asset_id = am.asset_id AND eas.entity_id = am.entity_id
-                    AND eas.quarter = am.quarter
                 WHERE {CURRENT_QUARTER_FILTER}
-                AND am.period_type = 'quarter'
                 AND LOWER(a.name) LIKE LOWER(?)
                 ORDER BY am.sales_psqm DESC NULLS LAST
                 LIMIT 1
@@ -485,12 +580,13 @@ def top_movers(
 
     order = "DESC" if direcao == "alta" else "ASC"
 
+    # Use v_asset_ltm so YoY comparison is LTM vs LTM (not Q×4 vs LTM)
     metric_cur = metric_sql.replace("am.", "cur.")
     metric_prev = metric_sql.replace("am.", "prev.")
 
     current_prior = """(
         (cur.entity_id IN ('igti11','mult3') AND cur.quarter = '4Q25' AND prev.quarter = '4Q24')
-        OR (cur.entity_id IN ('alos3','xpml11','jhsf3') AND cur.quarter = '3Q25' AND prev.quarter = '3Q24')
+        OR (cur.entity_id IN ('alos3','xpml11','jhsf3','hgbs11','visc11','bpml11') AND cur.quarter = '3Q25' AND prev.quarter = '3Q24')
     )"""
 
     extra_filters = []
@@ -516,14 +612,12 @@ def top_movers(
                 CASE WHEN {metric_prev} IS NOT NULL AND {metric_prev} != 0
                      THEN ROUND(({metric_cur} - {metric_prev}) * 100.0 / ABS({metric_prev}), 2)
                      ELSE NULL END as variacao_pct
-            FROM asset_metrics cur
-            JOIN asset_metrics prev
+            FROM v_asset_ltm cur
+            JOIN v_asset_ltm prev
                 ON prev.asset_id = cur.asset_id AND prev.entity_id = cur.entity_id
-                AND prev.period_type = 'quarter'
             JOIN assets a ON a.id = cur.asset_id
             JOIN entities e ON e.id = cur.entity_id
-            WHERE cur.period_type = 'quarter'
-            AND {current_prior}
+            WHERE {current_prior}
             AND {metric_cur} IS NOT NULL
             AND {metric_prev} IS NOT NULL
             {extra_where}
@@ -579,7 +673,7 @@ def resumo_mercado(
                           THEN am.rent_psqm * 100.0 / am.sales_psqm END), 2) as media_yield_pct,
                 ROUND(AVG(am.sss), 2) as media_sss_pct,
                 ROUND(SUM(am.sales_total) / 1000.0, 1) as vendas_totais_r_mi
-            FROM asset_metrics am
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             WHERE {where}
             GROUP BY {group_col}
@@ -611,10 +705,9 @@ def peer_group(
     with get_db() as conn:
         ref = conn.execute(f"""
             SELECT am.asset_id, {metric_sql} as ref_value
-            FROM asset_metrics am
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             WHERE {CURRENT_QUARTER_FILTER}
-            AND am.period_type = 'quarter'
             AND LOWER(a.name) LIKE LOWER(?)
             AND {metric_sql} IS NOT NULL
             ORDER BY am.sales_psqm DESC NULLS LAST
@@ -640,11 +733,10 @@ def peer_group(
                 ROUND(am.rent_psqm * 100.0 / NULLIF(am.sales_psqm,0), 2) as yield_pct,
                 CASE WHEN am.asset_id = ? THEN 1 ELSE 0 END as is_ref,
                 ROUND(({metric_sql} - ?) * 100.0 / ABS(?), 2) as delta_pct_vs_ref
-            FROM asset_metrics am
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             JOIN entities e ON e.id = am.entity_id
             WHERE {CURRENT_QUARTER_FILTER}
-            AND am.period_type = 'quarter'
             AND {metric_sql} BETWEEN ? AND ?
             ORDER BY is_ref DESC, {metric_sql} DESC
         """, [ref_asset_id, ref_value, ref_value, lower, upper])
@@ -655,7 +747,7 @@ def peer_group(
 def concentracao_portfolio(empresa: str) -> dict:
     """Análise de concentração do portfólio de uma empresa.
 
-    empresa: igti11 | mult3 | alos3 | xpml11 | jhsf3 (obrigatório)
+    empresa: igti11 | mult3 | alos3 | xpml11 | jhsf3 | hgbs11 | visc11 | bpml11 (obrigatório)
 
     Retorna:
     - top_5_ativos com % da receita total
@@ -730,10 +822,9 @@ def gap_analysis(
             SELECT a.name, a.category,
                    am.sales_psqm, am.rent_psqm, am.occupancy_rate,
                    am.sss, am.noi_margin
-            FROM asset_metrics am
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             WHERE {CURRENT_QUARTER_FILTER}
-            AND am.period_type = 'quarter'
             AND LOWER(a.name) LIKE LOWER(?)
             ORDER BY am.sales_psqm DESC NULLS LAST
             LIMIT 1
@@ -754,10 +845,9 @@ def gap_analysis(
                 ROUND(AVG(am.sss), 2) as avg_sss,
                 ROUND(AVG(am.noi_margin), 2) as avg_noi_margin,
                 COUNT(*) as n_ativos_categoria
-            FROM asset_metrics am
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             WHERE {CURRENT_QUARTER_FILTER}
-            AND am.period_type = 'quarter'
             AND a.category = ?
             AND am.sales_psqm IS NOT NULL
         """, [cat]).fetchone()
@@ -839,13 +929,342 @@ def scatter_data(
                 a.category as categoria,
                 {x_sql} as x,
                 {y_sql} as y
-            FROM asset_metrics am
+            FROM v_asset_ltm am
             JOIN assets a ON a.id = am.asset_id
             JOIN entities e ON e.id = am.entity_id
             WHERE {where}
             ORDER BY {x_sql} DESC
         """, params)
         return rows_to_dicts(cur)
+
+
+# ── STORE MIX TOOLS ────────────────────────────────────────────────────────
+
+VALID_SHOPPINGS = {
+    "CJ Shops", "Cidade Jardim", "Iguatemi Brasília", "Iguatemi São Paulo",
+    "JK Iguatemi", "Leblon", "Park Shopping Barigui", "Pátio Batel", "Village Mall",
+}
+
+# Mapeamento: nome do shopping no store_mix → entity_id no benchmark.db
+# Pátio Batel não está nas entidades do benchmark (é o nosso ativo)
+SHOPPING_ENTITY_MAP: dict[str, str] = {
+    "Iguatemi São Paulo":  "igti11",
+    "Iguatemi Brasília":   "igti11",
+    "JK Iguatemi":         "igti11",
+    "Leblon":              "igti11",   # Iguatemi Leblon
+    "Village Mall":        "mult3",
+    "Park Shopping Barigui": "mult3",
+    "Cidade Jardim":       "jhsf3",
+    "CJ Shops":            "jhsf3",   # CJ Shops faz parte do complexo Cidade Jardim (JHSF)
+    "Pátio Batel":         None,      # nosso shopping — fora do benchmark
+}
+
+# Shoppings agrupados por entidade
+ENTITY_SHOPPINGS: dict[str, list[str]] = {}
+for _sh, _ent in SHOPPING_ENTITY_MAP.items():
+    if _ent:
+        ENTITY_SHOPPINGS.setdefault(_ent, []).append(_sh)
+
+VALID_SEGMENTS = {
+    "Alimentação", "Artigos Diversos", "Artigos Esportivos", "Artigos para o Lar",
+    "Calçados", "Conveniência/Serviços", "Eletrodomésticos e Eletroeletrônicos",
+    "Entretenimento", "Hipermercado/Supermercado/Atacado", "Livrarias",
+    "Loja de Departamentos", "Perfumaria, Maquiagem e Cosméticos",
+    "Relojoarias, Joalherias e Bijouterias", "Telefonia e Acessórios",
+    "Vestuário", "Óticas",
+}
+
+
+def _validate_shopping(shopping: str) -> str:
+    shopping = shopping.strip()
+    if shopping and shopping not in VALID_SHOPPINGS:
+        raise ValueError(
+            f"Shopping inválido: '{shopping}'. Válidos: {', '.join(sorted(VALID_SHOPPINGS))}"
+        )
+    return shopping
+
+
+def _validate_segment(segmento: str) -> str:
+    segmento = segmento.strip()
+    if segmento and segmento not in VALID_SEGMENTS:
+        raise ValueError(
+            f"Segmento inválido: '{segmento}'. Válidos: {', '.join(sorted(VALID_SEGMENTS))}"
+        )
+    return segmento
+
+
+@mcp.tool()
+def mix_lojas(
+    shopping: str = "",
+    segmento: str = "",
+) -> dict:
+    """Breakdown do mix de lojas por segmento.
+
+    shopping: nome exato (ex: 'Pátio Batel', 'Village Mall') — vazio = todos os 9 shoppings
+    segmento: filtro por segmento — vazio = todos
+
+    Retorna: por segmento → n_lojas, n_lojas_pct, subsegmentos.
+    Também retorna totais e lista dos shoppings no escopo.
+    """
+    shopping = _validate_shopping(shopping)
+    segmento = _validate_segment(segmento)
+
+    filters = ["segment IS NOT NULL"]
+    params: list = []
+    if shopping:
+        filters.append("shopping = ?")
+        params.append(shopping)
+    if segmento:
+        filters.append("segment = ?")
+        params.append(segmento)
+
+    where = " AND ".join(filters)
+
+    with get_db() as conn:
+        n_total = conn.execute(
+            f"SELECT COUNT(*) FROM store_mix WHERE {where}", params
+        ).fetchone()[0] or 1
+
+        segs = conn.execute(f"""
+            SELECT
+                segment,
+                COUNT(*) as n_lojas,
+                GROUP_CONCAT(DISTINCT subsegment) as subsegmentos
+            FROM store_mix
+            WHERE {where}
+            GROUP BY segment
+            ORDER BY n_lojas DESC
+        """, params).fetchall()
+
+        breakdown = [
+            {
+                "segmento": s["segment"],
+                "n_lojas": s["n_lojas"],
+                "n_lojas_pct": round(s["n_lojas"] * 100 / n_total, 1),
+                "subsegmentos": sorted(set(
+                    x.strip() for x in (s["subsegmentos"] or "").split(",") if x.strip()
+                )),
+            }
+            for s in segs
+        ]
+
+        shoppings_in_scope = conn.execute(f"""
+            SELECT shopping, COUNT(*) as n_lojas
+            FROM store_mix WHERE {where}
+            GROUP BY shopping ORDER BY n_lojas DESC
+        """, params).fetchall()
+
+    return {
+        "filtro_shopping": shopping or "todos",
+        "filtro_segmento": segmento or "todos",
+        "n_lojas_total": n_total,
+        "shoppings": [dict(s) for s in shoppings_in_scope],
+        "por_segmento": breakdown,
+    }
+
+
+@mcp.tool()
+def comparar_mix(
+    shopping_a: str,
+    shopping_b: str,
+) -> dict:
+    """Compara o mix de lojas de dois shoppings lado a lado por segmento.
+
+    shopping_a, shopping_b: nomes exatos (ex: 'Pátio Batel', 'Village Mall')
+
+    Retorna para cada segmento: n_lojas e abl_pct de cada shopping,
+    delta_abl_pct (A − B) e delta_lojas (A − B).
+    Útil para identificar onde cada shopping é mais forte ou mais fraco.
+    """
+    shopping_a = _validate_shopping(shopping_a)
+    shopping_b = _validate_shopping(shopping_b)
+    if not shopping_a or not shopping_b:
+        raise ValueError("shopping_a e shopping_b são obrigatórios.")
+
+    with get_db() as conn:
+        def get_mix(sh: str) -> dict:
+            n_tot = conn.execute(
+                "SELECT COUNT(*) FROM store_mix WHERE shopping=? AND segment IS NOT NULL",
+                [sh]
+            ).fetchone()[0] or 1
+            rows = conn.execute("""
+                SELECT segment, COUNT(*) as n_lojas
+                FROM store_mix WHERE shopping=? AND segment IS NOT NULL
+                GROUP BY segment
+            """, [sh]).fetchall()
+            return {
+                "n_total": n_tot,
+                "segments": {
+                    r["segment"]: {
+                        "n_lojas": r["n_lojas"],
+                        "n_lojas_pct": round(r["n_lojas"] * 100 / n_tot, 1),
+                    }
+                    for r in rows
+                },
+            }
+
+        mix_a = get_mix(shopping_a)
+        mix_b = get_mix(shopping_b)
+
+    all_segs = sorted(set(mix_a["segments"]) | set(mix_b["segments"]))
+    comparison = []
+    for seg in all_segs:
+        a = mix_a["segments"].get(seg, {"n_lojas": 0, "n_lojas_pct": 0.0})
+        b = mix_b["segments"].get(seg, {"n_lojas": 0, "n_lojas_pct": 0.0})
+        comparison.append({
+            "segmento": seg,
+            f"{shopping_a}_n_lojas": a["n_lojas"],
+            f"{shopping_a}_pct": a["n_lojas_pct"],
+            f"{shopping_b}_n_lojas": b["n_lojas"],
+            f"{shopping_b}_pct": b["n_lojas_pct"],
+            "delta_n_lojas": a["n_lojas"] - b["n_lojas"],
+            "delta_pct": round(a["n_lojas_pct"] - b["n_lojas_pct"], 1),
+        })
+
+    comparison.sort(key=lambda x: abs(x["delta_pct"]), reverse=True)
+
+    return {
+        "shopping_a": shopping_a,
+        "shopping_b": shopping_b,
+        "resumo_a": {"n_lojas": mix_a["n_total"]},
+        "resumo_b": {"n_lojas": mix_b["n_total"]},
+        "comparacao_por_segmento": comparison,
+    }
+
+
+@mcp.tool()
+def buscar_loja(
+    nome: str = "",
+    segmento: str = "",
+    shopping: str = "",
+    top_n: int = 50,
+) -> list[dict]:
+    """Busca lojas no store_mix por nome, segmento e/ou shopping.
+
+    nome: busca parcial case-insensitive no nome da loja (ex: 'zara', 'starbucks')
+    segmento: filtro exato por segmento (ex: 'Vestuário', 'Alimentação')
+    shopping: filtro exato por shopping (ex: 'Pátio Batel', 'Village Mall')
+    top_n: máximo de resultados (default 50, max 200)
+
+    Retorna: lista de lojas com shopping, segmento, subsegmento, tipo e andar.
+    Se nome vazio e segmento vazio, retorna as top_n primeiras lojas por ordem alfabética.
+    """
+    segmento = _validate_segment(segmento)
+    shopping = _validate_shopping(shopping)
+    top_n = min(int(top_n), 200)
+
+    filters: list[str] = []
+    params: list = []
+
+    if nome:
+        filters.append("UPPER(store_name) LIKE UPPER(?)")
+        params.append(f"%{nome}%")
+    if segmento:
+        filters.append("segment = ?")
+        params.append(segmento)
+    if shopping:
+        filters.append("shopping = ?")
+        params.append(shopping)
+
+    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+
+    with get_db() as conn:
+        cur = conn.execute(f"""
+            SELECT
+                shopping,
+                store_name as loja,
+                segment as segmento,
+                subsegment as subsegmento,
+                store_type as tipo,
+                floor as andar,
+                CASE WHEN is_patio_batel=1 THEN 'sim' ELSE 'nao' END as is_patio_batel
+            FROM store_mix
+            {where}
+            ORDER BY store_name
+            LIMIT ?
+        """, params + [top_n])
+        return rows_to_dicts(cur)
+
+
+@mcp.tool()
+def mix_por_entidade(
+    entidade: str,
+    segmento: str = "",
+) -> dict:
+    """Breakdown do mix de lojas agregado por entidade/operadora.
+
+    entidade: igti11 (Iguatemi) | mult3 (Multiplan) | jhsf3 (JHSF) — entidades com store_mix disponível
+    segmento: filtro por segmento — vazio = todos
+
+    ATENÇÃO: abl_pct confiável apenas para Pátio Batel. Para entidades peer, usar n_lojas e n_lojas_pct.
+
+    Agrega automaticamente todos os shoppings da entidade no store_mix.
+    Iguatemi (igti11): Iguatemi SP + Iguatemi Brasília + JK Iguatemi + Leblon (4 shoppings)
+    Multiplan (mult3): Village Mall + Park Shopping Barigui (2 shoppings)
+    JHSF: Cidade Jardim + CJ Shops (2 shoppings)
+
+    Retorna: por segmento → n_lojas, abl_m2, abl_pct, n_lojas_pct + breakdown por shopping.
+    """
+    entidade = _validate_entity(entidade)
+    segmento = _validate_segment(segmento)
+
+    shoppings = ENTITY_SHOPPINGS.get(entidade)
+    if not shoppings:
+        raise ValueError(
+            f"Entidade '{entidade}' sem store_mix disponível. "
+            f"Entidades disponíveis: {', '.join(sorted(ENTITY_SHOPPINGS.keys()))}"
+        )
+
+    placeholders = ",".join("?" * len(shoppings))
+    params: list = list(shoppings)
+
+    seg_filter = ""
+    if segmento:
+        seg_filter = "AND segment = ?"
+        params.append(segmento)
+
+    with get_db() as conn:
+        n_total = conn.execute(f"""
+            SELECT COUNT(*) FROM store_mix
+            WHERE shopping IN ({placeholders}) AND segment IS NOT NULL {seg_filter}
+        """, params).fetchone()[0] or 1
+
+        segs = conn.execute(f"""
+            SELECT segment,
+                   COUNT(*) as n_lojas,
+                   GROUP_CONCAT(DISTINCT subsegment) as subsegmentos
+            FROM store_mix
+            WHERE shopping IN ({placeholders}) AND segment IS NOT NULL {seg_filter}
+            GROUP BY segment ORDER BY n_lojas DESC
+        """, params).fetchall()
+
+        by_shopping = conn.execute(f"""
+            SELECT shopping, COUNT(*) as n_lojas
+            FROM store_mix
+            WHERE shopping IN ({placeholders}) AND segment IS NOT NULL {seg_filter}
+            GROUP BY shopping ORDER BY n_lojas DESC
+        """, params).fetchall()
+
+    breakdown = [
+        {
+            "segmento": s["segment"],
+            "n_lojas": s["n_lojas"],
+            "n_lojas_pct": round(s["n_lojas"] * 100 / n_total, 1),
+            "subsegmentos": sorted(set(
+                x.strip() for x in (s["subsegmentos"] or "").split(",") if x.strip()
+            )),
+        }
+        for s in segs
+    ]
+
+    return {
+        "entidade": entidade,
+        "shoppings_incluidos": shoppings,
+        "filtro_segmento": segmento or "todos",
+        "n_lojas_total": n_total,
+        "por_shopping": [dict(s) for s in by_shopping],
+        "por_segmento": breakdown,
+    }
 
 
 # ── UTILITY TOOLS ──────────────────────────────────────────────────────────
@@ -856,15 +1275,30 @@ def query_sql(sql: str) -> list[dict]:
 
     Apenas SELECT e WITH são permitidos. Limite automático de 500 linhas.
     Tabelas: entities, assets, asset_metrics, portfolio_metrics, entity_asset_stakes, ingestion_log
-    Views: v_portfolio_clean, v_asset_full, v_premium_benchmark, v_curitiba_benchmark, v_yoy_portfolio, v_entities_coverage
+    Views:
+      v_asset_ltm — PREFERIR ESTA para séries temporais. Recalcula sales_psqm e rent_psqm
+                    como LTM real (soma 4 quarters / ABL). Colunas extras: sales_psqm_stored,
+                    rent_psqm_stored, ltm_sales_total, ltm_rent_total, ltm_quarters_count,
+                    psqm_methodology ('LTM' ou 'partial_NQ'), quarter_order.
+      v_portfolio_clean, v_asset_full, v_premium_benchmark, v_curitiba_benchmark,
+      v_yoy_portfolio, v_entities_coverage
 
-    Regra de período: Iguatemi/Multiplan = quarter '4Q25'; Allos/XP Malls/JHSF = quarter '3Q25'
-    Convenção stake_pct: decimal 0.0–1.0. Zeros = não mapeado (tratar como NULL).
+    Regra de período: IGTI11/MULT3 = quarter '4Q25'; demais (ALOS3/XPML11/JHSF3/HGBS11/VISC11/BPML11) = quarter '3Q25'
+    Convenção stake_pct: % 0.0–100.0. Zeros = não mapeado (tratar como NULL).
+    sales_total / rent_total em asset_metrics = R$ mil @100% do ativo (trimestral isolado).
+    sales_psqm em asset_metrics = R$/m²/quarter (valor bruto do trimestre). Usar v_asset_ltm para LTM anual.
     """
     sql_clean = sql.strip()
     sql_upper = sql_clean.upper()
     if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
         raise ValueError("Apenas queries SELECT/WITH são permitidas.")
+
+    # ABL por loja do Pátio Batel é confidencial — bloquear acesso direto
+    if "ABL_M2" in sql_upper and "STORE_MIX" in sql_upper:
+        raise ValueError(
+            "abl_m2 da tabela store_mix é dado confidencial do Pátio Batel e não está disponível via query_sql. "
+            "Use mix_por_segmento, comparar_mix ou mix_por_entidade para análise de mix."
+        )
 
     if "LIMIT" not in sql_upper:
         sql_clean = f"{sql_clean}\nLIMIT 500"
@@ -877,7 +1311,14 @@ def query_sql(sql: str) -> list[dict]:
 
 @mcp.tool()
 def schema_banco() -> dict:
-    """Retorna o schema completo do benchmark.db: tabelas, colunas e views."""
+    """Retorna o schema completo do benchmark.db: tabelas, colunas e views.
+
+    View principal para análise histórica: v_asset_ltm
+    - sales_psqm e rent_psqm são LTM real (soma 4 quarters / ABL), em R$/m²/ano
+    - sales_psqm_stored / rent_psqm_stored = valores originais da ingestão (Q×4 até 4Q24)
+    - ltm_quarters_count: quantos quarters compõem o LTM (4 = completo)
+    - psqm_methodology: 'LTM' quando 4 quarters disponíveis
+    """
     with get_db() as conn:
         tables = conn.execute("""
             SELECT name, type FROM sqlite_master
